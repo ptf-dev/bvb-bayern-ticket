@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends wget xvfb \
+RUN apt-get update && apt-get install -y --no-install-recommends wget xvfb xauth \
     && wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get install -y --no-install-recommends /tmp/chrome.deb || true \
     && apt-get install -fy --no-install-recommends \
