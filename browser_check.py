@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Check BVB ticket page using Chrome remote debugging with auto-login."""
-import subprocess, json, time, requests, websocket, sys
+import subprocess, json, time, requests, websocket, sys, os
 
 URL = "https://www.ticket-onlineshop.com/ols/bvb/de/profis/channel/shop/index/"
 OAUTH_URL = "https://www.ticket-onlineshop.com/ols/bvb/de/profis/channel/shop/oauth/start?target_uri=https://www.ticket-onlineshop.com/ols/bvb/de/profis/channel/shop/index"
@@ -42,15 +42,21 @@ def get_page_text(bvb_email="", bvb_pw=""):
     subprocess.run(["pkill", "-f", f"remote-debugging-port={PORT}"], capture_output=True)
     time.sleep(1)
 
+    env = os.environ.copy()
+    if "DISPLAY" not in env:
+        env["DISPLAY"] = ":99"
+
     # If we have credentials, go to OAuth login first
     start_url = OAUTH_URL if (bvb_email and bvb_pw) else URL
 
     proc = subprocess.Popen([
         CHROME, "--incognito",
+        "--no-sandbox",
+        "--disable-gpu",
         f"--remote-debugging-port={PORT}",
         "--remote-allow-origins=*",
         f"--user-data-dir={USER_DIR}", start_url
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
 
     text = ""
     try:
