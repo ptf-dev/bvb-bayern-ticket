@@ -1,21 +1,16 @@
 #!/usr/bin/env python3
-"""BVB Ticket Tracker - Flask Web App."""
-import subprocess, json, sys, os, time, threading, resend
+"""BVB Ticket Tracker - Flask Web App using Eventim API."""
+import os, time, threading, requests, resend
 from datetime import datetime
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify
 
 app = Flask(__name__)
 
-URL = "https://www.ticket-onlineshop.com/ols/bvb/de/profis/channel/shop/index/"
-MATCH = "Bayern"
-NO_TICKETS = "Derzeit keine Tickets"
-INTERVAL = 3600
-CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_check.py")
-
+API_URL = "https://public-api.eventim.com/seatmap/api/public/availability/tixx-1001-619883"
+SHOP_URL = "https://www.ticket-onlineshop.com/ols/bvb/de/profis/channel/shop/index/"
+INTERVAL = 300  # 5 minutes
 EMAIL = os.environ.get("BVB_EMAIL", "")
 RESEND_KEY = os.environ.get("BVB_RESEND_KEY", "")
-BVB_ACCOUNT = os.environ.get("BVB_ACCOUNT_EMAIL", "")
-BVB_PW = os.environ.get("BVB_ACCOUNT_PW", "")
 
 state = {"running": False, "status": "stopped", "logs": []}
 
@@ -34,47 +29,41 @@ def send(subject, html):
         except Exception as e:
             log(f"Email failed: {e}")
 
-def check_page():
-    result = subprocess.run(
-        [sys.executable, CHECKER, BVB_ACCOUNT, BVB_PW],
-        capture_output=True, text=True, timeout=180
-    )
-    data = json.loads(result.stdout)
-    text = data["text"]
-    if not text or "not a robot" in text.lower():
-        return "captcha"
-    if MATCH in text:
-        if NO_TICKETS in text: return "no_tickets"
-        if "Tickets ab" in text: return "available"
-    if "Aktuell sind keine Tickets" in text: return "no_tickets"
-    if "Tickets ab" in text or "Ticket kaufen" in text: return "available"
-    if "Hinweise" in text: return "no_tickets"
-    return "unknown"
+def check_api():
+    r = requests.get(API_URL, params={"a_affiliateId": "412"}, headers={
+        "accept": "application/json",
+        "origin": "https://www.ticket-onlineshop.com",
+        "referer": "https://www.ticket-onlineshop.com/",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "x-version": "6.20.0",
+    }, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    seats = data.get("seats", [])
+    ga = data.get("generalAdmissions", [])
+    return seats, ga, data
 
 def loop():
     while state["running"]:
         try:
-            log("Checking...")
+            log("Checking API...")
             state["status"] = "checking"
-            result = check_page()
-            if result == "captcha":
-                log("CAPTCHA/empty - retrying next cycle")
-                state["status"] = "running"
-            elif result == "no_tickets":
-                log("No tickets yet")
-                state["status"] = "running"
-            elif result == "available":
-                log("TICKETS FOUND!")
+            seats, ga, data = check_api()
+            if seats or ga:
+                count = len(seats) + len(ga)
+                log(f"TICKETS FOUND! {count} available")
                 state["status"] = "found"
                 send("BVB Tickets Available!",
-                     f"<h2>BVB vs Bayern tickets are available!</h2><p><a href='{URL}'>Buy now</a></p>")
-                state["running"] = False
-                return
+                     f"<h2>BVB vs Bayern tickets are available!</h2>"
+                     f"<p>{len(seats)} seats, {len(ga)} GA sections</p>"
+                     f"<p><a href='{SHOP_URL}'>Buy now</a></p>")
+                for _ in range(60):
+                    if not state["running"]: return
+                    time.sleep(1)
+                continue
             else:
-                log("Page changed - check manually")
+                log("No tickets yet")
                 state["status"] = "running"
-                send("BVB Tracker - Check Manually",
-                     f"<p>Page content changed. <a href='{URL}'>Check now</a></p>")
         except Exception as e:
             log(f"Error: {e}")
             state["status"] = "running"
@@ -96,7 +85,7 @@ def start():
         state["running"] = True
         state["status"] = "running"
         log("Started tracking")
-        send("BVB Tracker Started", "<p>Tracking BVB vs Bayern tickets. You'll be notified when available.</p>")
+        send("BVB Tracker Started", "<p>Tracking BVB vs Bayern tickets via API. Checking every 5 min.</p>")
         threading.Thread(target=loop, daemon=True).start()
     return jsonify(state)
 
